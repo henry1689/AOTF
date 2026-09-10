@@ -16,11 +16,15 @@
 > | Windows / 3.13 | `686 passed, 1 skipped` | 2026-09-11 连续 3 次一致 |
 > | Linux aarch64 / 3.11 | `678 passed, 1 skipped` | 09-09 硬化口径，未在本机复现 |
 >
-> **已知不确定项**：`test_cleanup.py::test_remove_dirty_with_force_removes`
-> 曾在全量长跑中出现 1 次 `git worktree remove --force` → Windows
-> `Permission denied`（疑似环境级句柄/占用竞争）。隔离、文件级及其后连续 3 次
-> 全量均未复现，**根因尚未定位**。复现方法：连续多次全量 pytest（单次约 6 分钟）。
-> 定位前不得声称该用例确定性通过。
+> **已知环境项（已定位并加固）**：Windows 全量长跑中约 40%（5 次中 2 次）
+> `test_cleanup.py` 的 `git worktree remove --force` 报
+> `failed to delete …: Permission denied`。已定位为**环境层瞬时占用**：
+> 失败后该目录可被立即删除，且 `archive_worktree` 对 worktree 只读
+> ⇒ 非本系统写入所致（典型为 Defender 实时扫描 / 文件系统收尾）。
+> 处置：**仅测试侧**做有上限的等待重试（`test_cleanup._remove_worktree`，
+> 按错误特征门控、超限即上抛，且有反例测试证明不无限重试）；
+> **产品 `cleanup.remove_worktree` 保持严格 fail-closed、不重试**。
+> 该用例仍属环境敏感项：若在重试上限内始终未获锁，仍会失败。
 
 工程整改默认遵循全局结构原则：先定位失效的不变量、责任边界与全部调用路径，
 再在唯一归属层修正并补齐契约/边界/闭环证据；局部特判不得作为最终修复。
@@ -65,6 +69,19 @@ owner 明确选择自治产品路线后再评估。
 ## 测试
 
 固定测试命令（绝对路径 Python，不裸 `python`，禁 bytecode/cache）：
+
+**CI 平台矩阵**：`.github/workflows/ci.yml` 在 `{ubuntu-latest, windows-latest} ×
+{3.11, 3.12, 3.13}` 上自动运行全量测试（`fail-fast: false`）。
+
+> ⚠️ 三条边界（不得省略）：
+> 1. 仓库当前**无 remote**，该工作流**不会执行**——交付的是可执行配置，不是已验证的 CI；
+> 2. 建远程并首次推送前，**不得宣称「CI 已通过」**；
+> 3. **Linux 侧首次真实执行尚未验证**，不得预称其会通过。
+>
+> 工作流与下方命令的 pytest flags 完全一致；差异仅在目标形式——工作流用
+> `tests/`，下方用显式枚举。二者覆盖同一集合，由
+> `tests/unit/test_conventions.py::test_readme_test_command_covers_all_test_files`
+> 机械保证枚举与实际文件集合一致（防手工清单漂移）。
 
 ```powershell
 Set-Location 'D:\tools\aotf'

@@ -1,0 +1,53 @@
+# AOTF CI —— 平台 × Python 矩阵
+#
+# 目的：让「全绿」成为任何平台、任何受支持版本上都被自动验证的事实，
+#       而不是靠人在某一台机器上手动跑一次。
+#
+# 背景：2026-09-09 的 `678 passed` 是 Linux/Python 3.11 单平台口径；本机
+#       Windows/Python 3.13 实测 2 failed（F1-b 已修）。缺 CI 时，平台差异
+#       没有任何机械化拦截。
+#
+# ⚠️ 诚实边界：本仓库当前**尚无 remote**，因此本工作流不会执行。交付的是
+#    「可执行配置」，不是「已验证的 CI」。在 owner 建立远程并首次推送前，
+#    不得宣称「CI 已通过」；Linux 侧的首次真实执行同样尚未验证。
+#
+# 与 README 的关系：测试命令的 flags 与 README 全量命令完全一致；README 采用
+#    显式文件枚举，本工作流采用 `tests/`。二者覆盖同一集合，且由
+#    tests/unit/test_conventions.py::test_readme_test_command_covers_all_test_files
+#    机械保证 README 枚举与实际文件集合一致。
+
+name: ci
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    name: ${{ matrix.os }} / py${{ matrix.python }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      # 一个平台/版本失败不应掩盖其他组合的结果。
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        # 覆盖 pyproject requires-python >=3.11,<3.14 的两端与中间。
+        python: ["3.11", "3.12", "3.13"]
+    env:
+      PYTHONDONTWRITEBYTECODE: "1"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install "claude-agent-sdk>=0.2.152,<1" pytest
+
+      - name: Run tests
+        run: python -B -m pytest -p no:cacheprovider -q tests/
