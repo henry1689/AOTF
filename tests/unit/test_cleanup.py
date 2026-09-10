@@ -316,6 +316,41 @@ def test_remove_non_repo_raises(sandbox) -> None:
         _remove_worktree(sandbox.base / "nope", archive_root=_aroot(sandbox))
 
 
+def test_prepare_preserves_underlying_git_error(monkeypatch, tmp_path) -> None:
+    """rev-parse 失败时，底层 GitCommandError 必须作为 __cause__ 保留。
+
+    防回归：曾把异常丢弃为 inside="false"，使真实原因（rc/stderr）彻底消失，
+    导致环境层瞬时故障无法诊断（不变量 #6：禁止静默吞错误）。
+    """
+    def _boom(repo, *args, **kwargs):
+        raise GitCommandError(
+            ("git", "rev-parse"), 128, b"",
+            b"fatal: detected dubious ownership in repository")
+
+    monkeypatch.setattr("aotf.git.cleanup.run_git", _boom)
+    with pytest.raises(CleanupError) as excinfo:
+        _remove_worktree(str(tmp_path), archive_root=str(tmp_path))
+
+    assert isinstance(excinfo.value.__cause__, GitCommandError), (
+        "底层 git 错误必须保留为 __cause__，不得被抹掉"
+    )
+    assert "dubious ownership" in str(excinfo.value), (
+        "底层 stderr 细节必须进入异常消息"
+    )
+    # 向后兼容：既有断言依赖此前缀（pytest.raises(match=...)）。
+    assert str(excinfo.value).startswith("not a git work tree")
+
+
+def test_prepare_reraises_when_git_unavailable(monkeypatch, tmp_path) -> None:
+    """git 不可用（returncode None）必须原样上抛，不得被转换成 CleanupError。"""
+    def _missing(repo, *args, **kwargs):
+        raise GitCommandError((), None, b"", b"git executable not found")
+
+    monkeypatch.setattr("aotf.git.cleanup.run_git", _missing)
+    with pytest.raises(GitCommandError):
+        _remove_worktree(str(tmp_path), archive_root=str(tmp_path))
+
+
 def json_load(path: str | Path) -> dict:
     import json
     return json.loads(Path(path).read_text(encoding="utf-8"))

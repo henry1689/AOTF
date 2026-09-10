@@ -133,7 +133,10 @@ def _prepare(path: Path, timeout: float):
     except GitCommandError as exc:
         if exc.returncode is None:
             raise
-        inside = "false"
+        # 保留底层 git 错误：转换不得抹掉根因（不变量 #6 禁止静默吞错误）。
+        # 曾把 exc 丢弃为 inside="false"，使真实原因（rc/stderr）彻底消失，
+        # 导致环境层瞬时故障无法诊断。
+        raise CleanupError(f"not a git work tree: {exc}") from exc
     if inside != "true":
         raise CleanupError("not a git work tree")
     try:
@@ -142,7 +145,7 @@ def _prepare(path: Path, timeout: float):
     except GitCommandError as exc:
         if exc.returncode is None:
             raise
-        raise CleanupError("worktree has no commits") from exc
+        raise CleanupError(f"worktree has no commits: {exc}") from exc
     report = preflight(path, timeout=timeout)
     branch: str | None = None
     try:
