@@ -1,0 +1,130 @@
+# AOTF (Autonomous Optimization Task Flow)
+
+**Pre-MVP 原型 — 禁止用于重要/生产代码库。**
+
+> 2026-09-09 完成首轮安全收口加固：Reviewer 结果/实际模型回传并严格
+> fail-closed、显式最小工具集、工具裁决审计、EvidenceRunner 最小环境、
+> 非空泛 Pilot 证明、跨平台路径校验、中间阶段安全重入，以及 AOTF
+> controller 唯一控制权。隔离 Python 3.11 全量验证为
+> `678 passed, 1 skipped`；详见
+> `docs/HARDENING-2026-09-09.md`。这不改变“尚未完成真实自主闭环”的边界。
+
+工程整改默认遵循全局结构原则：先定位失效的不变量、责任边界与全部调用路径，
+再在唯一归属层修正并补齐契约/边界/闭环证据；局部特判不得作为最终修复。
+
+AOTF 是唯一任务 controller。Claude Code/模型调用固定为单 turn、零工具，只能
+返回 typed mutation intents 或 review decision；文件写入、重试、证据、状态推进
+和终止均由 AOTF 执行。Agent 直接修改 worktree 会触发 SAFE_HALT。
+
+当前完成 M0-A 控制面骨架（A1..A5c 已闭合）、M0-B Git 隔离 + artifact store（B1..B7 已闭合）、M0-C Evidence 链 + Policy Engine（C1..C5 已闭合）、M0-D 真实 Claude SDK 三角色 + 工具权限（D1..D5 已闭合）与 M0-E 端到端试点已闭合（E1..E3，见 M0-E 小节）——**Pre-MVP（M0-A..E）完结验收候选**。验收对照：`docs/M0-A-ACCEPTANCE.md`、`docs/M0-B-ACCEPTANCE.md`、`docs/M0-C-ACCEPTANCE.md`、`docs/M0-D-ACCEPTANCE.md`、`docs/M0-E-ACCEPTANCE.md`。
+- M0-B1：git 沙箱夹具 + repo preflight 只读探测（已完成）
+- M0-B2：worktree create + baseline_manifest（已完成）
+- M0-B3：checkpoint commit（已完成）
+- M0-B4：actual delta（已完成）
+- M0-B5：worktree archive/清理与保留（已完成）
+- M0-B6：artifact store（已完成）
+- M0-B7：反例矩阵收敛 + M0-B 终验收文档（当前完成）
+- M0-C1：TestEvidenceRecord typed contract + 确定性序列化（已完成）
+- M0-C2：EvidenceRunner（subprocess 隔离执行）（已完成）
+- M0-C3：evidence bundle（tree/delta 绑定 + ingest + §9.3 顺序）（已完成）
+- M0-C4：Policy Engine 机械裁决（PASS/FAIL/INCOMPLETE/ERROR + next-state 建议）（已完成）
+- M0-C5：反例矩阵收敛 + M0-C 终验收文档（当前完成）
+- M0-D1：agents SDK 执行面契约 + FakeClaudeSDK（已完成）
+- M0-D2：真实 claude-agent-sdk adapter（ClaudeSdkRunner + A4a mapper）（已完成）
+- M0-D3：三角色 adapter（Planner/Implementer/Reviewer role spec + typed IO）（已完成）
+- M0-D4：工具权限矩阵（visible_tools 过滤 + can_use_tool canonical 判定 + Bash 白名单）（已完成）
+- M0-D5：全链路证据链收口 + M0-D 终验收文档（当前完成）
+
+## 当前状态
+
+**已闭合机器层（M0-A + M0-B + M0-C + M0-D）**：SQLite 控制面骨架（typed records / store+CAS / 状态机+事件账本 / lease-fencing / outbox / recovery / AgentRunner-Mock / orchestrator 基元 / fault drill / CLI doctor-health-recover-cancel）与 Git 隔离 + artifact store（preflight / worktree+baseline manifest / checkpoint / actual delta / archive-清理 / append-only artifact store）与 M0-C Evidence 链 + Policy Engine（typed evidence / subprocess runner / §9.3 bundle 编排 + B6 锁定 / 机械裁决 R1–R9）与 M0-D Claude SDK 执行层（agents 执行面契约 + fake / 真实 claude-agent-sdk adapter / 三角色 adapter / 工具权限矩阵）——沙箱验证、主仓零改动。验收对照：`docs/M0-A-ACCEPTANCE.md`、`docs/M0-B-ACCEPTANCE.md`、`docs/M0-C-ACCEPTANCE.md`、`docs/M0-D-ACCEPTANCE.md`。
+
+**M0-E 端到端试点（E1..E3）已闭合**：任务闭环编排引擎（orchestrate.py）+ 真实试点资产（pilot：样例仓生成器 samplelib / SAMPLE_TASKS×3 + FAULT_TASKS / RealRoleRunner 真实 adapter / run_one+run_all+PilotReport+prove_criteria §1.2 七项）——fake 演示零 token 全测（652 passed + 1 skipped）；live 真实运行门控不自动执行。验收对照：`docs/M0-E-ACCEPTANCE.md`。
+
+**尚未实现 / 不得用于重要或生产代码库**：controller-owned 单轮 mutation
+协议尚未进行真实模型 live 校准；approval 门全流程、execution snapshot/
+materialization、lease 与闭环编排接线、真实 webhook、OS 级进程/网络沙箱仍
+未完成。中间阶段崩溃会明确 SAFE_HALT，不宣称自动续跑。M1 默认暂停，只有
+owner 明确选择自治产品路线后再评估。
+
+权威架构文档：`D:\tools\AOTF-Pre-MVP-architecture-and-implementation-spec-2026-08-31.md`
+
+## 测试
+
+固定测试命令（绝对路径 Python，不裸 `python`，禁 bytecode/cache）：
+
+```powershell
+Set-Location 'D:\tools\aotf'
+$env:PYTHONDONTWRITEBYTECODE = '1'
+$env:PYTHONPATH = 'src'
+& 'C:\Users\henry\AppData\Local\Programs\Python\Python313\python.exe' -B -m pytest -p no:cacheprovider -q tests/unit/test_package.py tests/unit/test_errors.py tests/unit/test_canonical.py tests/unit/test_models.py tests/unit/test_db.py tests/unit/test_store.py tests/unit/test_state.py tests/unit/test_ledger.py tests/unit/test_lease.py tests/unit/test_outbox.py tests/unit/test_recovery.py tests/unit/test_runner.py tests/unit/test_orchestrator.py tests/unit/test_drill.py tests/unit/test_cli.py tests/unit/test_preflight.py tests/unit/test_worktree.py tests/unit/test_checkpoint.py tests/unit/test_delta.py tests/unit/test_cleanup.py tests/unit/test_artifact_store.py tests/unit/test_evidence_schema.py tests/unit/test_evidence_runner.py tests/unit/test_evidence_bundle.py tests/unit/test_policy_rules.py tests/unit/test_policy_engine.py tests/unit/test_agents_schema.py tests/unit/test_agents_fake.py tests/unit/test_agents_claude_sdk.py tests/unit/test_agents_roles.py tests/unit/test_agents_reports.py tests/unit/test_agents_tools.py tests/unit/test_controller.py tests/unit/test_orchestrate.py tests/unit/test_pilot_sample.py tests/unit/test_pilot_adapter.py tests/unit/test_pilot_tasks.py tests/unit/test_pilot_run.py
+```
+
+## M0-A 包完成清单（A1..A5c 已闭合）
+
+- M0-A1b1：canonical 确定性编码（已完成）
+- M0-A1b2a1：枚举与 CanonicalPayload 基座（已完成）
+- M0-A1b2a2：NewEvent / EventRecord typed contracts（已完成）
+- M0-A1b2b1：CycleRecord typed contract（已完成）
+- M0-A1b2b2a：TaskRecord 完整实现与标量证据（已完成）
+- M0-A1b2b2b：TaskRecord invariant 负向证据（已完成，A1b2b 已闭合）
+- M0-A1b2c：ApprovalRecord typed contract（已完成）
+- M0-A1b2d：ArtifactRecord typed contract（已完成）
+- M0-A1b2d1：AgentRunRecord typed contract（已完成）
+- M0-A1b2d2：OutboxRecord typed contract（已完成，A1b2 系列 typed records 闭合）
+- M0-A1c1：SQLite schema & connection（已完成）
+- M0-A1c2a-1：cycles/tasks typed store（已完成）
+- M0-A1c2a-2：events store + TaskRecord CAS（已完成）
+- M0-A1c2b：四伴随表 typed store（已完成，A1c2 store 层全落位）
+- M0-A2a：StateService 合法转换 + transition（已完成）
+- M0-A2b：EventLedger 账本流 / 重建 / 幂等（已完成）
+- M0-A3a1：controller_leases 表 + LeaseRecord typed contract（已完成）
+- M0-A3a2：lease store typed 读写（已完成）
+- M0-A3a3：lease store CAS 变更原语（已完成）
+- M0-A3a4：lease/fencing 服务（已完成）
+- M0-A3b1：outbox store 状态原语（已完成）
+- M0-A3b2：outbox delivery 服务（已完成）
+- M0-A3c：recovery 一致性诊断 + 后继任务工厂（已完成）
+- M0-A4a：AgentRunner 协议 + MockAgentRunner（已完成）
+- M0-A4b：orchestrator 编排基元（已完成）
+- M0-A4c：MockAgentRunner 驱动 fault-injection drill（已完成）
+- M0-A5a：CLI 骨架 + doctor/health 只读（已完成）
+- M0-A5b：CLI 操作命令（task status / recover 提案 / cancel）（已完成）
+- M0-A5c：文档收口 + M0-A 终验收报告（当前完成）
+- M0-B..E：M0-B 已闭合（B1..B7，见下方清单）；M0-C 已闭合（C1..C5，见 M0-C 小节），M0-D 已闭合（D1..D5，见 M0-D 小节），M0-E 已闭合（E1..E3 见 M0-E 小节）
+
+## M0-B 包完成清单（Git 隔离与 artifact store；B1..B7 已闭合）
+
+- M0-B1：git 沙箱夹具 + repo preflight 只读探测（已完成）
+- M0-B2：worktree create + baseline_manifest（已完成）
+- M0-B3：checkpoint commit（控制器在任务分支 stage 批准子集+提交+clean 校验）（已完成）
+- M0-B4：actual delta（baseline↔checkpoint / binary-safe patch / semantic / 范围验证）（已完成）
+- M0-B5：worktree archive/清理与保留（已完成）
+- M0-B6：artifact store（append-only ingest/verify、canonical JSON / hash）（已完成）
+- M0-B7：反例矩阵收敛 + M0-B 终验收文档（当前完成）
+- M0-C..E：M0-C 已闭合（C1..C5，见 M0-C 小节）；M0-D 已闭合（D1..D5，见 M0-D 小节），M0-E 已闭合（E1..E3 见 M0-E 小节）
+
+## M0-C 包完成清单（EvidenceRunner 与 Policy Engine；C1..C5 已闭合）
+
+- M0-C1：TestEvidenceRecord / EvidenceCheck typed contract + 确定性序列化（已完成）
+- M0-C2：EvidenceRunner（subprocess 隔离执行）（已完成）
+- M0-C3：evidence bundle（tree/delta 绑定 + ingest + §9.3 顺序）（已完成）
+- M0-C4：Policy Engine 机械裁决（PASS/FAIL/INCOMPLETE/ERROR + next-state 建议）（已完成）
+- M0-C5：反例矩阵收敛 + M0-C 终验收文档（当前完成）
+
+## M0-D 包完成清单（真实 Claude SDK 三角色与工具权限；D1..D5 已闭合）
+
+- M0-D1：agents SDK 执行面契约（SdkRunContext/SDKRunOutcome）+ FakeClaudeSDK（SDK 门 enforce）（已完成）
+- M0-D2：真实 claude-agent-sdk adapter（ClaudeSdkRunner + A4a mapper）（已完成）
+- M0-D3：三角色 adapter（Planner/Implementer/Reviewer role spec + typed IO，#28/#26）（已完成）
+- M0-D4：工具权限矩阵（visible_tools 过滤 + can_use_tool canonical 判定 + Bash 白名单，#30/#12/#10）（已完成）
+- M0-D5：全链路证据链收口 + M0-D 终验收文档（当前完成）
+- M0-D..E：M0-D 已闭合（D1..D5，见上方）；M0-E 已闭合（E1..E3 见 M0-E 小节）
+
+## M0-E 包完成清单（端到端试点；E1..E3 已闭合）
+
+- M0-E1：任务闭环编排引擎（orchestrate.py：授权→implementer→checkpoint→delta→evidence→reviewer→policy 闭环，fake 全测）（已完成）
+- M0-E2：真实试点资产（pilot 子包：sample 样例仓生成器 samplelib / tasks SAMPLE_TASKS×3 + FAULT_TASKS / adapter RealRoleRunner=D2+D3+D4 唯一组装 + with_fake 零 token demo / run run_one+run_all+PilotReport+§1.2 prove_criteria；fake 全测零 token，live 门控不自动执行）（已完成）
+- M0-E2-amend：pilot 默认模型 opus→deepseek（ALIAS_MODELS deepseek→deepseek-v4-flash，live 网关校准点）（已完成）
+- M0-E3：M0-E 终验收对照 + §19 汇总 + Pre-MVP 完结（docs/M0-E-ACCEPTANCE.md）（已完成）
+- M0-E..：E1+E2+E3 已闭合；Pre-MVP（M0-A..E）完结验收候选；live 真跑 + M1 由 owner 门控决策
