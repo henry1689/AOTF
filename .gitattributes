@@ -1,0 +1,15 @@
+# AOTF 换行真值策略（2026-09-11 建立）
+#
+# 目的：保证同一 commit 在任何平台落盘字节完全一致。
+# 背景：AOTF 的核心契约是字节级真值（preimage SHA-256 / tree hash /
+#       delta hash / evidence sha）。若落盘字节随平台漂移（Windows
+#       autocrlf=true 会把 LF 写成 CRLF），换平台即 hash 漂移，
+#       checkpoint/delta/evidence 完整性判定失效。
+#
+# 策略：仓库内与各平台 checkout 一律 LF。
+* text=auto eol=lf
+
+# 将来若出现必须使用 CRLF 的文件（如 Windows 批处理 .bat/.cmd），
+# 在此单独声明，不要放宽上面的全局规则：
+# *.bat text eol=crlf
+# *.cmd text eol=crlf
