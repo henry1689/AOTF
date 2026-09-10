@@ -150,7 +150,7 @@ def test_duplicate_check_id_rejected(sandbox, tmp_path) -> None:
 
 def test_not_clean_worktree_rejected(sandbox, tmp_path) -> None:
     wt = _wt(sandbox)
-    (wt / "init.txt").write_text("dirty\n", encoding="utf-8")
+    (wt / "init.txt").write_text("dirty\n", encoding="utf-8", newline="")
     with pytest.raises(EvidenceError, match="not clean"):
         produce_evidence(wt, task_id="task-1", evidence_id="ev-8",
                          worktree_tree=_tree(wt), delta_sha256=H64,

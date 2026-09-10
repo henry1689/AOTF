@@ -166,7 +166,7 @@ def test_runner_injects_context_options(tmp_path) -> None:
 
 def test_runner_success_outcome(tmp_path) -> None:
     manifest = tmp_path / "manifest.json"
-    manifest.write_text('{"plan": true}', encoding="utf-8")
+    manifest.write_text('{"plan": true}', encoding="utf-8", newline="")
     seen: list = []
 
     async def q(prompt: str, options: object):

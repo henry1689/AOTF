@@ -269,7 +269,7 @@ def test_unicode_db_path_command_ok(tmp_path, capsys) -> None:
 
 def test_doctor_rejects_non_aotf_file(tmp_path, capsys) -> None:
     bad = tmp_path / "not.db"
-    bad.write_text("this is not a sqlite database", encoding="utf-8")
+    bad.write_text("this is not a sqlite database", encoding="utf-8", newline="")
     code, _, err = _invoke(capsys, ["doctor", str(bad)])
     assert code == 1
     assert json.loads(err)["error"]

@@ -31,7 +31,7 @@ def test_snapshot_and_controller_replace(tmp_path) -> None:
 
 def test_controller_create_and_delete(tmp_path) -> None:
     old = tmp_path / "old.txt"
-    old.write_text("old\n", encoding="utf-8")
+    old.write_bytes(b"old\n")
     changed = apply_mutations(
         str(tmp_path), ("new.txt", "old.txt"), (
             FileMutation("new.txt", "create", None, "new\n"),
@@ -45,8 +45,8 @@ def test_controller_create_and_delete(tmp_path) -> None:
 def test_controller_validates_whole_batch_before_writing(tmp_path) -> None:
     a = tmp_path / "a.txt"
     b = tmp_path / "b.txt"
-    a.write_text("a0", encoding="utf-8")
-    b.write_text("b0", encoding="utf-8")
+    a.write_bytes(b"a0")
+    b.write_bytes(b"b0")
     with pytest.raises(ControllerMutationError, match="preimage hash mismatch"):
         apply_mutations(str(tmp_path), ("a.txt", "b.txt"), (
             FileMutation("a.txt", "replace", _sha(b"a0"), "a1"),
@@ -66,7 +66,7 @@ def test_controller_rejects_unsafe_or_control_paths(tmp_path, path) -> None:
 
 
 def test_controller_rejects_out_of_scope_duplicate_and_limits(tmp_path) -> None:
-    (tmp_path / "a.txt").write_text("a", encoding="utf-8")
+    (tmp_path / "a.txt").write_bytes(b"a")
     with pytest.raises(ControllerMutationError, match="outside approval"):
         apply_mutations(str(tmp_path), ("a.txt",), (
             FileMutation("b.txt", "create", None, "b"),

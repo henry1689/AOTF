@@ -5,9 +5,22 @@
 > 2026-09-09 完成首轮安全收口加固：Reviewer 结果/实际模型回传并严格
 > fail-closed、显式最小工具集、工具裁决审计、EvidenceRunner 最小环境、
 > 非空泛 Pilot 证明、跨平台路径校验、中间阶段安全重入，以及 AOTF
-> controller 唯一控制权。隔离 Python 3.11 全量验证为
-> `678 passed, 1 skipped`；详见
-> `docs/HARDENING-2026-09-09.md`。这不改变“尚未完成真实自主闭环”的边界。
+> controller 唯一控制权。详见 `docs/HARDENING-2026-09-09.md`。这不改变
+> “尚未完成真实自主闭环”的边界。
+>
+> **基线口径（平台 × Python，2026-09-11 修正）**：单一平台的「全绿」不构成
+> 跨平台基线；任何绿色声明必须附平台与 Python 版本。
+>
+> | 平台 / Python | 全量结果 | 说明 |
+> |---|---|---|
+> | Windows / 3.13 | `686 passed, 1 skipped` | 2026-09-11 连续 3 次一致 |
+> | Linux aarch64 / 3.11 | `678 passed, 1 skipped` | 09-09 硬化口径，未在本机复现 |
+>
+> **已知不确定项**：`test_cleanup.py::test_remove_dirty_with_force_removes`
+> 曾在全量长跑中出现 1 次 `git worktree remove --force` → Windows
+> `Permission denied`（疑似环境级句柄/占用竞争）。隔离、文件级及其后连续 3 次
+> 全量均未复现，**根因尚未定位**。复现方法：连续多次全量 pytest（单次约 6 分钟）。
+> 定位前不得声称该用例确定性通过。
 
 工程整改默认遵循全局结构原则：先定位失效的不变量、责任边界与全部调用路径，
 再在唯一归属层修正并补齐契约/边界/闭环证据；局部特判不得作为最终修复。
@@ -57,7 +70,7 @@ owner 明确选择自治产品路线后再评估。
 Set-Location 'D:\tools\aotf'
 $env:PYTHONDONTWRITEBYTECODE = '1'
 $env:PYTHONPATH = 'src'
-& 'C:\Users\henry\AppData\Local\Programs\Python\Python313\python.exe' -B -m pytest -p no:cacheprovider -q tests/unit/test_package.py tests/unit/test_errors.py tests/unit/test_canonical.py tests/unit/test_models.py tests/unit/test_db.py tests/unit/test_store.py tests/unit/test_state.py tests/unit/test_ledger.py tests/unit/test_lease.py tests/unit/test_outbox.py tests/unit/test_recovery.py tests/unit/test_runner.py tests/unit/test_orchestrator.py tests/unit/test_drill.py tests/unit/test_cli.py tests/unit/test_preflight.py tests/unit/test_worktree.py tests/unit/test_checkpoint.py tests/unit/test_delta.py tests/unit/test_cleanup.py tests/unit/test_artifact_store.py tests/unit/test_evidence_schema.py tests/unit/test_evidence_runner.py tests/unit/test_evidence_bundle.py tests/unit/test_policy_rules.py tests/unit/test_policy_engine.py tests/unit/test_agents_schema.py tests/unit/test_agents_fake.py tests/unit/test_agents_claude_sdk.py tests/unit/test_agents_roles.py tests/unit/test_agents_reports.py tests/unit/test_agents_tools.py tests/unit/test_controller.py tests/unit/test_orchestrate.py tests/unit/test_pilot_sample.py tests/unit/test_pilot_adapter.py tests/unit/test_pilot_tasks.py tests/unit/test_pilot_run.py
+& 'C:\Users\henry\AppData\Local\Programs\Python\Python313\python.exe' -B -m pytest -p no:cacheprovider -q tests/unit/test_package.py tests/unit/test_errors.py tests/unit/test_canonical.py tests/unit/test_models.py tests/unit/test_db.py tests/unit/test_store.py tests/unit/test_state.py tests/unit/test_ledger.py tests/unit/test_lease.py tests/unit/test_outbox.py tests/unit/test_recovery.py tests/unit/test_runner.py tests/unit/test_orchestrator.py tests/unit/test_drill.py tests/unit/test_cli.py tests/unit/test_preflight.py tests/unit/test_worktree.py tests/unit/test_checkpoint.py tests/unit/test_delta.py tests/unit/test_cleanup.py tests/unit/test_artifact_store.py tests/unit/test_evidence_schema.py tests/unit/test_evidence_runner.py tests/unit/test_evidence_bundle.py tests/unit/test_policy_rules.py tests/unit/test_policy_engine.py tests/unit/test_agents_schema.py tests/unit/test_agents_fake.py tests/unit/test_agents_claude_sdk.py tests/unit/test_agents_roles.py tests/unit/test_agents_reports.py tests/unit/test_agents_tools.py tests/unit/test_controller.py tests/unit/test_orchestrate.py tests/unit/test_pilot_sample.py tests/unit/test_pilot_adapter.py tests/unit/test_pilot_tasks.py tests/unit/test_pilot_run.py tests/unit/test_conventions.py
 ```
 
 ## M0-A 包完成清单（A1..A5c 已闭合）

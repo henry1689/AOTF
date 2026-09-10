@@ -148,7 +148,7 @@ def test_verify_metadata_mismatch(tmp_path) -> None:
     meta_path = Path(info.metadata_path)
     payload = json.loads(meta_path.read_text(encoding="utf-8"))
     payload["kind"] = "tampered"
-    meta_path.write_text(json.dumps(payload), encoding="utf-8")
+    meta_path.write_text(json.dumps(payload), encoding="utf-8", newline="")
     with pytest.raises(ArtifactError, match="metadata mismatch"):
         verify(root, TASK, KIND, info.artifact_id)
 
@@ -213,7 +213,7 @@ def test_list_skips_corrupt_sidecar(tmp_path) -> None:
                   producer=PRODUCER)
     bad_dir = root / TASK / "badkind"
     bad_dir.mkdir(parents=True)
-    (bad_dir / "x.json").write_text("not json", encoding="utf-8")
+    (bad_dir / "x.json").write_text("not json", encoding="utf-8", newline="")
     (bad_dir / "x.data").write_bytes(b"data")
     listed = list_artifacts(str(root), TASK)
     assert [a.artifact_id for a in listed] == [good.artifact_id]

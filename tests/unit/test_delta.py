@@ -155,7 +155,7 @@ def test_manifest_invalid_raises(sandbox) -> None:
     )
     for payload in payloads:
         bad = sandbox.base / "bad.json"
-        bad.write_text(payload, encoding="utf-8")
+        bad.write_text(payload, encoding="utf-8", newline="")
         with pytest.raises(DeltaError, match="invalid baseline manifest"):
             capture_delta(wt, manifest_path=bad)
 
