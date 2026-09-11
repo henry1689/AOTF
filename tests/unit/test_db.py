@@ -24,6 +24,8 @@ def test_schema_sql_defines_all_tables() -> None:
     assert names == [
         "cycles", "tasks", "events", "approvals",
         "artifacts", "agent_runs", "outbox", "controller_leases",
+        # M1
+        "snapshots", "approval_signatures",
     ]
 
 
@@ -34,8 +36,8 @@ def test_init_db_creates_all_tables(tmp_path) -> None:
         "AND name NOT LIKE 'sqlite_%' ORDER BY name"
     ).fetchall()
     assert [r["name"] for r in rows] == [
-        "agent_runs", "approvals", "artifacts", "controller_leases",
-        "cycles", "events", "outbox", "tasks",
+        "agent_runs", "approval_signatures", "approvals", "artifacts",
+        "controller_leases", "cycles", "events", "outbox", "snapshots", "tasks",
     ]
     conn.close()
 

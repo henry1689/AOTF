@@ -7,5 +7,6 @@ readme = "README.md"
 dependencies = ["claude-agent-sdk>=0.2.152,<1"]
 
 [tool.pytest.ini_options]
+asyncio_mode = "auto"
 testpaths = ["tests"]
 pythonpath = ["src"]

@@ -34,6 +34,7 @@ class PilotTask:
     test_plan: tuple[tuple[str, str], ...] = _PYTEST
     budget_usd: Decimal = Decimal("5")
     fault: str | None = None
+    registry: dict | None = None
 
 
 def _check_task(t: PilotTask) -> None:
@@ -150,3 +151,33 @@ FAULT_TASKS: dict[str, PilotTask] = {
 
 for _t in (*SAMPLE_TASKS, *FAULT_TASKS.values()):
     _check_task(_t)
+
+# M1: 中型仓试点任务（self-hosting 测试）
+MEDIUM_CARGO_TASKS: tuple[PilotTask, ...] = (
+    PilotTask(
+        id="m1-refactor-error-handling",
+        title="统一 AOTF 错误码命名规范",
+        proposal=_proposal(
+            "在 src/aotf/errors.py 中统一错误码命名规范",
+            ("src/aotf/errors.py", "src/aotf/models.py", "src/aotf/controller.py",
+             "src/aotf/orchestrate.py"),
+            "新增 ErrorCode.MIGRATION_FAILED 和 ErrorCode.SNAPSHOT_CORRUPTED，"\
+            "确保所有 raise AotfError(ErrorCode.XXX) 使用新命名，行为不变。",
+        ),
+        allowed_files=("src/aotf/errors.py", "src/aotf/models.py", "src/aotf/controller.py",
+                       "src/aotf/orchestrate.py"),
+        budget_usd=Decimal("10"),
+    ),
+    PilotTask(
+        id="m1-add-snapshot-docstring",
+        title="为 snapshot 模块补充文档字符串",
+        proposal=_proposal(
+            "为 src/aotf/snapshot.py 补充完整文档",
+            ("src/aotf/snapshot.py"),
+            "补充模块级 docstring 说明设计裁决与边界，类/函数级 docstring 说明"
+            "参数、返回值、异常。不改变行为，仅增加文档。",
+        ),
+        allowed_files=("src/aotf/snapshot.py",),
+        budget_usd=Decimal("2"),
+    ),
+)

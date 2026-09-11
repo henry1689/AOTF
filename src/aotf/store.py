@@ -27,6 +27,7 @@ from aotf.models import (
     TaskPhase,
     TaskRecord,
 )
+from aotf.snapshot import SnapshotRecord, SnapshotError
 
 
 def _integrity(message: str) -> None:
@@ -455,3 +456,38 @@ def mark_outbox_failed(
         (attempts, message_id),
     )
     return cur.rowcount == 1
+
+
+# ─── M1: Approval Signature ──────────────────────────────────────────────────
+
+
+def insert_approval_signature(
+    conn: sqlite3.Connection,
+    *,
+    approval_id: str,
+    signature: str,  # hex string
+    public_key: str,  # hex string
+    created_at: datetime,
+) -> None:
+    conn.execute("""
+        INSERT INTO approval_signatures (approval_id, signature, public_key, created_at)
+        VALUES (?, ?, ?, ?)
+        ON CONFLICT(approval_id) DO UPDATE SET
+            signature=excluded.signature,
+            public_key=excluded.public_key,
+            created_at=excluded.created_at
+    """, (approval_id, signature, public_key, _encode_dt(created_at)))
+
+
+def get_approval_signature(
+    conn: sqlite3.Connection,
+    approval_id: str,
+) -> tuple[str, str, str] | None:
+    """返回 (signature_hex, public_key_hex, created_at) 或 None。"""
+    row = conn.execute(
+        "SELECT signature, public_key, created_at FROM approval_signatures WHERE approval_id=?",
+        (approval_id,),
+    ).fetchone()
+    if row is None:
+        return None
+    return (row["signature"], row["public_key"], row["created_at"])

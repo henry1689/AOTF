@@ -1,3 +1,11 @@
+Metadata-Version: 2.4
+Name: aotf
+Version: 0.1.0.dev0
+Summary: AOTF (Autonomous Optimization Task Flow) - Pre-MVP foundation only. Not for production use.
+Requires-Python: <3.14,>=3.11
+Description-Content-Type: text/markdown
+Requires-Dist: claude-agent-sdk<1,>=0.2.152
+
 # AOTF (Autonomous Optimization Task Flow)
 
 **Pre-MVP 原型 — 禁止用于重要/生产代码库。**
@@ -89,7 +97,7 @@ owner 明确选择自治产品路线后再评估。
 Set-Location 'D:\tools\aotf'
 $env:PYTHONDONTWRITEBYTECODE = '1'
 $env:PYTHONPATH = 'src'
-& 'C:\Users\henry\AppData\Local\Programs\Python\Python313\python.exe' -B -m pytest -p no:cacheprovider -q tests/unit/test_package.py tests/unit/test_errors.py tests/unit/test_canonical.py tests/unit/test_models.py tests/unit/test_db.py tests/unit/test_store.py tests/unit/test_state.py tests/unit/test_ledger.py tests/unit/test_lease.py tests/unit/test_outbox.py tests/unit/test_recovery.py tests/unit/test_runner.py tests/unit/test_orchestrator.py tests/unit/test_drill.py tests/unit/test_cli.py tests/unit/test_preflight.py tests/unit/test_worktree.py tests/unit/test_checkpoint.py tests/unit/test_delta.py tests/unit/test_cleanup.py tests/unit/test_artifact_store.py tests/unit/test_evidence_schema.py tests/unit/test_evidence_runner.py tests/unit/test_evidence_bundle.py tests/unit/test_policy_rules.py tests/unit/test_policy_engine.py tests/unit/test_agents_schema.py tests/unit/test_agents_fake.py tests/unit/test_agents_claude_sdk.py tests/unit/test_agents_roles.py tests/unit/test_agents_reports.py tests/unit/test_agents_tools.py tests/unit/test_controller.py tests/unit/test_orchestrate.py tests/unit/test_pilot_sample.py tests/unit/test_pilot_adapter.py tests/unit/test_pilot_tasks.py tests/unit/test_pilot_run.py tests/unit/test_approval_cli.py tests/unit/test_retry.py tests/unit/test_snapshot.py tests/unit/test_conventions.py
+& 'C:\Users\henry\AppData\Local\Programs\Python\Python313\python.exe' -B -m pytest -p no:cacheprovider -q tests/unit/test_package.py tests/unit/test_errors.py tests/unit/test_canonical.py tests/unit/test_models.py tests/unit/test_db.py tests/unit/test_store.py tests/unit/test_state.py tests/unit/test_ledger.py tests/unit/test_lease.py tests/unit/test_outbox.py tests/unit/test_recovery.py tests/unit/test_runner.py tests/unit/test_orchestrator.py tests/unit/test_drill.py tests/unit/test_cli.py tests/unit/test_preflight.py tests/unit/test_worktree.py tests/unit/test_checkpoint.py tests/unit/test_delta.py tests/unit/test_cleanup.py tests/unit/test_artifact_store.py tests/unit/test_evidence_schema.py tests/unit/test_evidence_runner.py tests/unit/test_evidence_bundle.py tests/unit/test_policy_rules.py tests/unit/test_policy_engine.py tests/unit/test_agents_schema.py tests/unit/test_agents_fake.py tests/unit/test_agents_claude_sdk.py tests/unit/test_agents_roles.py tests/unit/test_agents_reports.py tests/unit/test_agents_tools.py tests/unit/test_controller.py tests/unit/test_orchestrate.py tests/unit/test_pilot_sample.py tests/unit/test_pilot_adapter.py tests/unit/test_pilot_tasks.py tests/unit/test_pilot_run.py tests/unit/test_conventions.py
 ```
 
 ## M0-A 包完成清单（A1..A5c 已闭合）

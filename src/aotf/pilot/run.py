@@ -84,7 +84,7 @@ def _pytest_registry():
 async def run_one(conn, *, sample_root: str, task: PilotTask, db_root: str,
                   live: bool = False, model: str = "deepseek",
                   budget: Decimal | None = None, interactive: bool = False,
-                  role_runner=None) -> PilotReport:
+                  role_runner=None, registry=None) -> PilotReport:
     """单任务闭环：bootstrap + engine + 指标。live=False 全 fake 零 token。"""
     rep = preflight(sample_root)
     if rep.verdict != "clean" or not rep.head_commit:
@@ -125,7 +125,7 @@ async def run_one(conn, *, sample_root: str, task: PilotTask, db_root: str,
         base_repo=str(sample_root), worktrees_root=str(wt_root),
         artifacts_root=str(base / "artifacts"),
         scratch_root=str(base / "scratch"),
-        registry=_pytest_registry(), model_alias=model,
+        registry=task.registry if task.registry else _pytest_registry(), model_alias=model,
         agent_max_budget_usd=budget_val)
     plan = TaskPlan(task_id=task_id, proposal_text=task.proposal,
                     allowed_files=task.allowed_files,

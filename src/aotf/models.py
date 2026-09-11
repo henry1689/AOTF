@@ -15,6 +15,7 @@ from datetime import datetime, timedelta
 from decimal import Decimal
 from enum import StrEnum
 
+from aotf.attest import SIGNATURE_BYTES
 from aotf.canonical import canonical_json_bytes
 from aotf.errors import AotfError, ErrorCode
 

@@ -41,9 +41,19 @@ ANTHROPIC_API_KEY 门控（live 测试默认 skip）。
 
 from __future__ import annotations
 
+import asyncio
+import json
+import logging
+from collections import namedtuple
 from collections.abc import AsyncIterator, Callable
 from pathlib import Path
+from types import SimpleNamespace
 
+from aotf.agents.middleware_ccswitch import (
+    CC_SWITCH_ENV_KEYS,
+    detect_ccswitch_path,
+    get_ccswitch_env,
+)
 from aotf.agents.roles import ROLE_IDS
 from aotf.agents.schema import (
     SDKReason,
@@ -55,9 +65,15 @@ from aotf.agents.schema import (
 )
 from aotf.runner import AgentRunRequest, AgentRunResult
 
+# 将 CC-Switch JSON dict 转为对象，使 run() 的鸭子类型检测（num_turns/session_id/is_error）可用
+_DictToObj = SimpleNamespace
+
+_log = logging.getLogger(__name__)
+
 __all__ = [
     "ALIAS_MODELS",
     "ClaudeSdkRunner",
+    "model_usage_map",
     "resolve_model",
     "resolved_model_from_result",
     "to_agent_run_result",
@@ -84,15 +100,36 @@ def resolve_model(alias: str) -> str:
         raise ValueError(f"unknown model alias: {alias}") from None
 
 
+def _usage_field(obj: object, name: str) -> object:
+    """同时兼容 dict 与对象取值（CLI JSON dict / SDK dataclass）。"""
+    if isinstance(obj, dict):
+        return obj.get(name)
+    return getattr(obj, name, None)
+
+
+def model_usage_map(result: object) -> dict:
+    """取 model→usage 映射。
+
+    SDK ResultMessage 用 `model_usage`（snake_case）；CC-Switch CLI 的
+    `--output-format json` 用 `modelUsage`（camelCase）。两条通道都要能统计
+    token/resolved_model（M1 指标口径）。
+    """
+    for field in ("model_usage", "modelUsage"):
+        value = getattr(result, field, None)
+        if isinstance(value, dict) and value:
+            return value
+    return {}
+
+
 def resolved_model_from_result(result: object) -> str | None:
     """ResultMessage.model_usage 首个 key 或 ModelUsage.canonicalModel。"""
-    model_usage = getattr(result, "model_usage", None)
-    if isinstance(model_usage, dict):
+    model_usage = model_usage_map(result)
+    if model_usage:
         for model_id in model_usage:
             if isinstance(model_id, str) and model_id:
                 return model_id
         for usage in model_usage.values():
-            canonical = (usage or {}).get("canonicalModel")
+            canonical = _usage_field(usage, "canonicalModel")
             if isinstance(canonical, str) and canonical:
                 return canonical
     return None
@@ -147,6 +184,7 @@ class ClaudeSdkRunner:
         role: str = "implementer",
         allowed_files: tuple[str, ...] = (),
         tool_decider: Callable[..., object] | None = None,
+        use_ccswitch: bool | None = None,  # M1: 自动探测
     ) -> None:
         """role/allowed_files/tool_decider 为 D4 工具权限接线（§7.3）。
 
@@ -167,8 +205,24 @@ class ClaudeSdkRunner:
         self._role = role
         self._allowed_files = allowed_files
         self._tool_decider = tool_decider
+        # M1: CC-Switch 探测
+        if use_ccswitch is None:
+            use_ccswitch = detect_ccswitch_path() is not None
+        self._use_ccswitch = use_ccswitch
+        self._ccswitch_env = get_ccswitch_env() if use_ccswitch else {}
 
     async def _query(self, prompt: str, options: object):
+        # M1: 通过 CC-Switch 子进程启动
+        if self._use_ccswitch and not self._query_fn:
+            async for event in self._query_via_ccswitch(prompt, options):
+                # _query_via_ccswitch 返回 dict（JSON 解析），run() 用鸭子类型检测
+                # 终止消息（num_turns/session_id/is_error）需要是对象属性，统一转换
+                if isinstance(event, dict):
+                    yield _DictToObj(event)
+                else:
+                    yield event
+            return
+        
         if self._query_fn is not None:
             async for event in self._query_fn(prompt=prompt, options=options):
                 yield event
@@ -177,6 +231,102 @@ class ClaudeSdkRunner:
 
         async for event in _sdk.query(prompt=prompt, options=options):
             yield event
+    
+    async def _query_via_ccswitch(
+        self, prompt: str, options: object
+    ) -> AsyncIterator[object]:
+        """通过 CC-Switch CLI 子进程启动 Claude Code（M1 真实模型通道）。
+
+        架构约束（对齐 SDK 路径 _build_options）：
+        - visible_tools 空 tuple → `--tools ""` 禁用全部工具，绝不扩成默认全集；
+          这是 controller-only write 模型的硬前提（模型只能提 mutation intents，
+          不得自行落盘）；
+        - 非空 → 逐名透传（planner 的只读工具集）；
+        - 不传 --allowedTools：预批准 ≠ 工具可见性，避免旁路扩大权限面。
+        """
+        import os as _os
+        ccswitch_path = detect_ccswitch_path()
+        if ccswitch_path is None:
+            raise RuntimeError("CC-Switch path not found")
+
+        # 从 options (SdkRunContext) 提取参数
+        model = getattr(options, 'requested_model', 'deepseek') if hasattr(options, 'requested_model') else 'deepseek'
+        max_turns = getattr(options, 'max_turns', 1) if hasattr(options, 'max_turns') else 1
+        max_budget = getattr(options, 'max_budget_usd', 5.0) if hasattr(options, 'max_budget_usd') else 5.0
+        cwd = getattr(options, 'cwd', '.') if hasattr(options, 'cwd') else '.'
+        visible_tools = getattr(options, 'visible_tools', ()) or ()
+        permission_mode = getattr(options, 'permission_mode', 'dontAsk') or 'dontAsk'
+        system_prompt_path = getattr(options, 'system_prompt_path', None)
+
+        # 空 tuple → 显式禁用全部工具（语义同 SDK tools=[]）
+        tools_arg = ",".join(visible_tools) if visible_tools else ""
+
+        # CLI 的 turn 计数含内部步骤（系统提示处理、结构化输出生成），与 SDK
+        # 单轮语义不等价：实测 max_turns=1 会以 "Reached maximum number of
+        # turns (1)" 丢掉已完成的推理。零工具（--tools ""）下多轮无副作用
+        # 能力，上限仍由 --max-budget-usd 封住，故设下限而非原值透传。
+        cli_max_turns = max(3, int(max_turns))
+
+        cmd = [
+            str(ccswitch_path),
+            "-p", prompt,
+            "--output-format", "json",
+            "--tools", tools_arg,
+            "--max-turns", str(cli_max_turns),
+            "--max-budget-usd", str(float(max_budget)),
+            "--permission-mode", permission_mode,
+        ]
+        if cwd and cwd != ".":
+            cmd += ["--add-dir", cwd]
+        if system_prompt_path:
+            from pathlib import Path as _Path
+            sp = _Path(system_prompt_path)
+            if sp.is_file():
+                cmd += ["--append-system-prompt", sp.read_text(encoding="utf-8")]
+
+        env = get_ccswitch_env()
+        env.update(_os.environ)
+
+        proc = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdin=asyncio.subprocess.DEVNULL,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            env=env,
+        )
+
+        try:
+            stdout, stderr = await asyncio.wait_for(
+                proc.communicate(),
+                timeout=300
+            )
+
+            output = stdout.decode('utf-8', errors='replace')
+            err_text = (stderr.decode('utf-8', errors='replace') if stderr
+                        else "")
+            parsed: object | None = None
+            if output.strip():
+                try:
+                    parsed = json.loads(output)
+                except json.JSONDecodeError:
+                    parsed = {"type": "text", "content": output}
+
+            # CLI 自带 is_error 的终止结果即为权威判定（含 error_max_turns /
+            # budget 等）。非零退出码不再二次否决——否则已解析出的
+            # structured_output/result 会被异常丢弃，模型产出白费。
+            if isinstance(parsed, dict) and "is_error" in parsed:
+                yield parsed
+                return
+
+            if proc.returncode != 0:
+                tail = err_text.strip()[:300] or "no stderr"
+                raise RuntimeError(
+                    f"CC-Switch exit={proc.returncode}: {tail}")
+            if parsed is not None:
+                yield parsed
+        except asyncio.TimeoutError:
+            proc.kill()
+            raise RuntimeError("CC-Switch timeout")
 
     async def run(self, ctx: SdkRunContext) -> SDKRunOutcome:
         if not Path(ctx.cwd).is_dir():
@@ -201,6 +351,8 @@ class ClaudeSdkRunner:
                                      error_code="no_result_message")
             return self._map_result(ctx, result, attempts)
         except Exception as exc:  # SDK 运行异常 → ERROR 不冒泡
+            # error_code 只容纳码（无空格）；原因细节走日志，否则诊断断链
+            _log.warning("runner query failed: %s: %s", type(exc).__name__, exc)
             return SDKRunOutcome(
                 attempts=tuple(attempts),
                 reason=SDKReason.ERROR,
@@ -321,12 +473,14 @@ class ClaudeSdkRunner:
     @staticmethod
     def _usage(result: object) -> SDKUsage:
         inp = out = 0
-        model_usage = getattr(result, "model_usage", None)
-        if isinstance(model_usage, dict):
-            for usage in model_usage.values():
-                u = usage or {}
-                inp += int(u.get("inputTokens", 0) or 0)
-                out += int(u.get("outputTokens", 0) or 0)
+        for usage in model_usage_map(result).values():
+            inp += int(_usage_field(usage, "inputTokens") or 0)
+            out += int(_usage_field(usage, "outputTokens") or 0)
+        if inp == 0 and out == 0:
+            # CLI 顶层 usage 用 snake_case（input_tokens/output_tokens）
+            top = getattr(result, "usage", None)
+            inp = int(_usage_field(top, "input_tokens") or 0)
+            out = int(_usage_field(top, "output_tokens") or 0)
         return SDKUsage(input_tokens=inp, output_tokens=out)
 
     @staticmethod

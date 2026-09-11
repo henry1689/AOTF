@@ -21,8 +21,8 @@ from aotf.errors import AotfError
 from aotf.models import TaskPhase
 
 _EXPECTED_TABLES = frozenset({
-    "agent_runs", "approvals", "artifacts", "controller_leases",
-    "cycles", "events", "outbox", "tasks",
+    "agent_runs", "approvals", "approval_signatures", "artifacts",
+    "controller_leases", "cycles", "events", "outbox", "snapshots", "tasks",
 })
 
 

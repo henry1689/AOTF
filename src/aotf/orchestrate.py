@@ -57,7 +57,20 @@ from aotf.models import TERMINAL_TASK_PHASES, TaskPhase
 from aotf.orchestrator import normalize_status, record_run
 from aotf.policy.engine import ControlFacts, evaluate
 from aotf.policy.rules import PolicyError
+from aotf.retry import (
+    BudgetExceededError,
+    RateLimitError,
+    RetryableError,
+    TemporaryNetworkError,
+    run_with_retry,
+)
 from aotf.runner import AgentRunRequest, AgentRunResult
+from aotf.snapshot import (
+    SnapshotRecord,
+    delete_snapshots_for_task,
+    load_snapshot,
+    save_snapshot,
+)
 from aotf.state import transition
 from aotf.store import get_approval, get_task
 
@@ -105,6 +118,7 @@ class EngineConfig:
         default_factory=lambda: dict(_ROLE_MAX_TURNS_DEFAULT))
     agent_max_budget_usd: Decimal = Decimal("20")
     agent_deadline_minutes: int = 120
+    agent_max_retries: int = 3  # M1: 重试次数
 
 
 @dataclass(frozen=True, slots=True)
@@ -209,21 +223,34 @@ class _Engine:
         return self.worktree
 
     async def _run_agent(self, role: str, inputs: dict) -> RoleOutcome:
+        """带 snapshot + retry 的 agent 执行（M1）。"""
         started_at = _now()
         deadline = started_at + timedelta(minutes=self.cfg.agent_deadline_minutes)
         req = AgentRunRequest(
             run_id=_new_id(), task_id=self.plan.task_id, role=role,
             requested_model=self.cfg.model_alias,
             input_digest=_input_digest(inputs),
-            # Implementer is deliberately one-shot: it receives an AOTF snapshot
-            # and returns mutation intents. A Claude Code agent loop must never
-            # become the task controller.
             max_turns=1,
             max_budget_usd=self.cfg.agent_max_budget_usd,
             deadline_at=deadline)
-        oc = await self.role_runner.run(role, inputs=inputs)
+        
+        try:
+            # 带重试执行
+            oc = await run_with_retry(
+                self.role_runner.run,
+                role,
+                inputs=inputs,
+                max_retries=self.cfg.agent_max_retries,
+            )
+        except (BudgetExceededError, RetryableError):
+            # 预算超限或重试耗尽
+            self._stop(TaskPhase.SAFE_HALT, f"agent {role} failed after retries")
+        except (RateLimitError, TemporaryNetworkError) as exc:
+            # 可重试错误耗尽
+            self._stop(TaskPhase.SAFE_HALT, f"agent {role} {exc}")
+        
         result = AgentRunResult(
-            run_id=req.run_id, status=oc.status,  # type: ignore[arg-type]
+            run_id=req.run_id, status=oc.status,
             resolved_model=oc.resolved_model,
             input_tokens=oc.input_tokens, output_tokens=oc.output_tokens,
             estimated_cost_usd=oc.estimated_cost_usd,
@@ -233,9 +260,74 @@ class _Engine:
                    started_at=started_at, ended_at=ended_at)
         norm = normalize_status(req, result, ended_at)
         if norm != "completed":
-            # FAILED 仅 POLICY_EVALUATING 可达（state 机）→ 中途失败走 SAFE_HALT
             self._stop(TaskPhase.SAFE_HALT, f"agent {role} {norm}")
+        
+        # M1: 保存 snapshot
+        self._save_snapshot(role, inputs, oc)
+        
         return oc
+    
+    def _save_snapshot(self, role: str, inputs: dict, outcome: RoleOutcome) -> None:
+        """持久化 execution snapshot（M1）。"""
+        import json as _json
+        from dataclasses import asdict
+        from datetime import datetime
+        
+        def _dt_iso(dt):
+            return dt.isoformat() if isinstance(dt, datetime) else dt
+        
+        snapshot_id = f"snap-{self.plan.task_id}-{role}-{_now().isoformat()}"
+        # mutations 可能是 list 或 tuple，统一转为 tuple[str, ...]
+        mutations_list = list(outcome.mutations) if outcome.mutations else []
+        mutations_paths = tuple(m.path for m in mutations_list)
+        evidence_json = None
+        if self.evidence is not None:
+            # 只序列化 record 和 results，排除 bytes 字段
+            from dataclasses import asdict
+            ev_dict = {
+                'record': asdict(self.evidence.record),
+                'results': [asdict(r) if hasattr(r, '__dataclass_fields__') else str(r) for r in self.evidence.results],
+                'artifacts': [asdict(a) if hasattr(a, '__dataclass_fields__') else str(a) for a in self.evidence.artifacts],
+            }
+            # 递归转换 datetime 字段
+            def _convert_special(obj):
+                from datetime import datetime
+                if isinstance(obj, datetime):
+                    return obj.isoformat()
+                if isinstance(obj, bytes):
+                    return obj.hex()
+                if isinstance(obj, dict):
+                    return {k: _convert_special(v) for k, v in obj.items()}
+                if isinstance(obj, list):
+                    return [_convert_special(i) for i in obj]
+                return obj
+            evidence_json = _json.dumps(_convert_special(ev_dict), ensure_ascii=False)
+        record = SnapshotRecord(
+            snapshot_id=snapshot_id,
+            task_id=self.plan.task_id,
+            role=role,
+            phase_before=self.task.phase.value,
+            phase_after=self.task.phase.value,
+            worktree_path=self.worktree or "",
+            baseline_tree=self._baseline_tree(),
+            actual_tree=self.delta.actual_tree if self.delta else None,
+            mutations_applied=mutations_paths,
+            delta_sha256=self.delta.patch_sha256 if self.delta else None,
+            evidence_json=evidence_json,
+            review_verdict=outcome.verdict,
+            run_inputs_json=_json.dumps(inputs, ensure_ascii=False),
+            created_at=_now(),
+            updated_at=_now(),
+        )
+        save_snapshot(self.conn, record)
+    
+    def _resume_from_snapshot(self, snap: SnapshotRecord) -> None:
+        """从 snapshot 恢复上下文（M1，仅填充内存状态，不实际重入执行）。"""
+        # 注意：当前仍 SAFE_HALT，等待完整 materialization
+        # 这里只作为框架占位，避免直接跳过验证
+        import logging
+        logging.info(f"Found incomplete snapshot for {snap.task_id}/{snap.role}, will HALT")
+        self._stop(TaskPhase.SAFE_HALT, f"snapshot exists but recovery not yet implemented")
 
     async def _implement(self) -> None:
         wt = self._ensure_worktree()
@@ -349,9 +441,15 @@ async def run_task_closed_loop(
     """单任务闭环执行 → ready/terminal phase。机械异常 fail-closed。"""
     eng = _Engine(conn, plan, cfg, role_runner)
     try:
-        # 中间阶段包含尚未持久化的 role/evidence 上下文。新进程直接续跑会
-        # 重复副作用或用空 verdict 推进；在完整 materialization 接入前必须
-        # 明确停机，而不是假装可恢复。
+        # M1: 检查是否有未完成的 snapshot
+        for role in ("implementer", "reviewer"):
+            snap = load_snapshot(conn, plan.task_id, role)
+            if snap and snap.phase_before == eng.task.phase.value:
+                # 有未完成的 snapshot，尝试恢复
+                eng._resume_from_snapshot(snap)
+                break
+        
+        # 中间阶段包含尚未持久化的 role/evidence 上下文。
         if eng.task.phase in {
             TaskPhase.IMPLEMENTING,
             TaskPhase.DELTA_CAPTURED,
@@ -394,6 +492,9 @@ async def run_task_closed_loop(
                     f"cannot persist SAFE_HALT for {plan.task_id}") \
                     from halt_exc
             eng.task = latest
+    # M1: 任务终态后清理 snapshot
+    if eng.task.phase in TERMINAL_TASK_PHASES or eng.task.phase in _READY_PHASES:
+        delete_snapshots_for_task(conn, plan.task_id)
     latest = get_task(conn, plan.task_id)
     if latest is None:
         raise RuntimeError(f"task disappeared: {plan.task_id}")

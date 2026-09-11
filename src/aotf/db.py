@@ -114,6 +114,33 @@ CREATE TABLE IF NOT EXISTS controller_leases (
   expires_at TEXT NOT NULL,
   version INTEGER NOT NULL DEFAULT 0
 );
+
+-- M1: Execution Snapshot
+CREATE TABLE IF NOT EXISTS snapshots (
+  snapshot_id TEXT PRIMARY KEY,
+  task_id TEXT NOT NULL,
+  role TEXT NOT NULL CHECK(role IN ('implementer', 'reviewer')),
+  phase_before TEXT NOT NULL,
+  phase_after TEXT NOT NULL,
+  worktree_path TEXT NOT NULL,
+  baseline_tree TEXT NOT NULL,
+  actual_tree TEXT,
+  mutations_applied TEXT,
+  delta_sha256 TEXT,
+  evidence_json TEXT,
+  review_verdict TEXT CHECK(review_verdict IN ('PASS', 'CONCERNS', 'BLOCK')),
+  run_inputs_json TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+-- M1: Approval signature storage
+CREATE TABLE IF NOT EXISTS approval_signatures (
+  approval_id TEXT PRIMARY KEY REFERENCES approvals(approval_id),
+  signature TEXT NOT NULL,
+  public_key TEXT NOT NULL,
+  created_at TEXT NOT NULL
+);
 """
 
 BUSY_TIMEOUT_MS = 5000
