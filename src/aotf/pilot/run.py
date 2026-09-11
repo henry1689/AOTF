@@ -18,6 +18,8 @@ from __future__ import annotations
 import hashlib
 import json
 import time
+import os
+import sys
 import uuid
 from dataclasses import dataclass, fields
 from datetime import datetime, timezone
@@ -73,13 +75,96 @@ def _proposal_sha(proposal: str) -> str:
     return hashlib.sha256(proposal.encode("utf-8")).hexdigest()
 
 
-def _pytest_registry():
+
+    candidates = [sys.executable]
+    # Windows 常见路径
+    if sys.platform == "win32":
+        local = os.environ.get("LOCALAPPDATA", "")
+        for ver in ("313", "312", "311"):
+            py = os.path.join(local, "Programs", "Python", f"Python{ver}", "python.exe")
+            if os.path.isfile(py) and py not in candidates:
+                candidates.append(py)
+
+    import subprocess
+    for py in candidates:
+        result = subprocess.run([py, "-m", "pytest", "--version"],
+                              capture_output=True)
+        if result.returncode == 0:
+            return py
+
+    # 回退到当前 python（可能失败）
+    return sys.executable
+
+
+    python = _find_python_with_pytest()
     spec = CommandSpec(command_id="pytest",
-                       argv=(__import__("sys").executable, "-B", "-m",
+                       argv=(python, "-B", "-m",
                              "pytest", "-p", "no:cacheprovider", "-q"),
                        cwd=".", timeout=180.0)
     return build_registry((spec,))
 
+
+
+
+def _pytest_registry():
+    python = _find_python_with_pytest()
+    spec = CommandSpec(command_id="pytest",
+                       argv=(python, "-B", "-m",
+                             "pytest", "-p", "no:cacheprovider", "-q"),
+                       cwd=".", timeout=180.0)
+    return build_registry((spec,))
+def _find_python_with_pytest() -> str:
+    """查找有 pytest 的 python 可执行文件。
+
+    注意：必须用 subprocess 检查（不用 import），因为 WindowsApps python
+    stub 在 import 时可访问用户 site-packages，但 subprocess 继承的
+    最小化环境看不到（PYTHONNOUSERSITE=1 + 用户 site 路径不同）。
+    
+    优先选择系统级 python（Program Files/Local/Programs），因为这些 python
+    的 site-packages 在系统路径下，不受 PYTHONNOUSERSITE 影响。
+    """
+    import subprocess
+
+    # Windows 系统级 python 优先
+    if sys.platform == "win32":
+        candidates = []
+        # 系统级路径
+        for prefix in [os.environ.get("LOCALAPPDATA", ""), r"C:\Program Files", r"C:\Program Files (x86)"]:
+            if not prefix:
+                continue
+            for ver in ("313", "312", "311"):
+                py = os.path.join(prefix, "Programs", "Python", f"Python{ver}", "python.exe")
+                if os.path.isfile(py):
+                    candidates.append(py)
+        # 添加当前 python 作为最后选项
+        if sys.executable not in candidates:
+            candidates.append(sys.executable)
+    else:
+        candidates = [sys.executable]
+
+    for py in candidates:
+        result = subprocess.run([py, "-m", "pytest", "--version"],
+                              capture_output=True)
+        if result.returncode == 0:
+            # 验证最小化环境下也能运行
+            env = dict(os.environ)
+            env["PYTHONNOUSERSITE"] = "1"
+            result2 = subprocess.run([py, "-m", "pytest", "--version"],
+                                   capture_output=True, env=env)
+            if result2.returncode == 0:
+                return py
+
+    # 回退到当前 python（可能失败）
+    return sys.executable
+
+
+def _pytest_registry():
+    python = _find_python_with_pytest()
+    spec = CommandSpec(command_id="pytest",
+                       argv=(python, "-B", "-m",
+                             "pytest", "-p", "no:cacheprovider", "-q"),
+                       cwd=".", timeout=180.0)
+    return build_registry((spec,))
 
 async def run_one(conn, *, sample_root: str, task: PilotTask, db_root: str,
                   live: bool = False, model: str = "deepseek",
